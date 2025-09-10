@@ -1,109 +1,87 @@
 use core::time::Duration;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::analyser::analyse_html;
-use crate::downloader::url_to_html;
+use crate::analyser::Analyser;
+use crate::downloader::Downloader;
 use crate::value::ScoredValue;
 
-type ArMx<T> = Arc<Mutex<T>>;
-pub type SafePriority<T> = ArMx<BinaryHeap<ScoredValue<T>>>;
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct HtmlUrl {
+    pub html: String,
+    pub url: String,
+}
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Crawler {
-    urls_to_download: SafePriority<String>,
-    htmls_to_analyse: SafePriority<(String, String)>,
-    visited_pages: ArMx<HashMap<String, usize>>,
+    analyser: Arc<Analyser>,
+    downloader: Arc<Downloader>,
+    htmls: Arc<Mutex<BinaryHeap<ScoredValue<HtmlUrl>>>>,
 }
 
 impl Crawler {
     pub fn new() -> Self {
         Self {
-            urls_to_download: Arc::new(Mutex::new(
-                vec![ScoredValue {
-                    value: "https://www.google.com".to_owned(),
-                    score: 10,
-                }]
-                .into_iter()
-                .collect(),
-            )),
-            ..Default::default()
+            analyser: Arc::new(Analyser::new()),
+            downloader: Arc::new(Downloader::new()),
+            htmls: Arc::new(Mutex::new(BinaryHeap::new())),
         }
     }
 
     pub async fn run(&self) {
         let downloader = self.run_downloader();
+        let downloader2 = self.run_downloader();
         let analyser = self.run_analyser();
-        downloader.await.unwrap();
+        downloader.await.await.unwrap();
+        downloader2.await.await.unwrap();
         analyser.await.unwrap();
     }
 
-    fn run_downloader(&self) -> JoinHandle<()> {
-        let urls = self.urls_to_download.clone();
-        let htmls = self.htmls_to_analyse.clone();
+    async fn run_downloader(&self) -> JoinHandle<()> {
+        let analyser = Arc::clone(&self.analyser);
+        let downloader = Arc::clone(&self.downloader);
+        let htmls = Arc::clone(&self.htmls);
         tokio::spawn(async move {
-            let mut count = 0;
             loop {
-                let new_url = urls.lock().await.pop();
-
-                let Some(next_url_to_download) = new_url else {
-                    if count == 60 {
-                        break;
-                    } else {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        count += 1;
-                        continue;
-                    }
+                let Some(next_url_to_download) = analyser.next_link().await else {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    println!("Downloader has nothing to do");
+                    continue;
                 };
 
                 let ScoredValue { value: url, score } = next_url_to_download;
 
-                let html = url_to_html(&url).await;
+                if let Some(html) = downloader.download_html(&url).await {
+                    println!("Downloaded {url}");
+                    let scored_html = ScoredValue {
+                        score,
+                        value: HtmlUrl { html, url },
+                    };
 
-                let scored_html = ScoredValue {
-                    value: (url, html),
-                    score,
-                };
-
-                dbg!(scored_html.score);
-
-                htmls.lock().await.push(scored_html);
+                    htmls.lock().await.push(scored_html);
+                } else {
+                    eprintln!("Failed to download {url}")
+                }
             }
         })
     }
 
     fn run_analyser(&self) -> JoinHandle<()> {
-        let urls_to_download = self.urls_to_download.clone();
-        let htmls_to_analyse = self.htmls_to_analyse.clone();
-        let visited_pages = self.visited_pages.clone();
+        let analyser = Arc::clone(&self.analyser);
+        let htmls = Arc::clone(&self.htmls);
         tokio::spawn(async move {
-            let mut count = 0;
             loop {
-                let new_html = htmls_to_analyse.lock().await.pop();
-
-                let Some(next_html_to_analyse) = new_html else {
-                    if count == 60 {
-                        break;
-                    } else {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        count += 1;
-                        continue;
-                    }
+                let Some(next_html_to_analyse) = htmls.lock().await.pop() else {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    println!("Analyser has nothing to do");
+                    continue;
                 };
-                count = 0;
 
-                let (current_url, current_html) = next_html_to_analyse.value;
-
-                let (new_urls, score) = analyse_html(&current_html).await;
-                let mut urls_lock = urls_to_download.lock().await;
-                for url in new_urls {
-                    urls_lock.push(url);
-                }
-
-                visited_pages.lock().await.insert(current_url, score);
+                println!("Analysing {}", next_html_to_analyse.value.url);
+                analyser.analyse_html(next_html_to_analyse.value).await;
             }
         })
     }

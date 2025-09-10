@@ -104,6 +104,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "crawler"
 version = "0.1.0"
 dependencies = [
+ "html-filter",
  "reqwest",
  "tokio",
 ]
@@ -278,6 +279,12 @@ name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+
+[[package]]
+name = "html-filter"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1787bc482b049f0b840a7a644fbad6aff95a1a66d304ffd6d65fe338dfbb406f"
 
 [[package]]
 name = "http"

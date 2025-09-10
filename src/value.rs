@@ -14,6 +14,6 @@ impl<T: Eq> Ord for ScoredValue<T> {
 
 impl<T: Eq + PartialEq> PartialOrd for ScoredValue<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.score.partial_cmp(&other.score)
+        Some(self.cmp(other))
     }
 }
