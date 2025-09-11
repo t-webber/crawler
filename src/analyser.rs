@@ -1,4 +1,7 @@
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::Write as _;
+use std::panic::catch_unwind;
 
 use html_filter::prelude::{Filter, Html};
 use tokio::sync::Mutex;
@@ -14,10 +17,7 @@ pub struct Analyser {
     discovered_links: Mutex<HashMap<String, usize>>,
 }
 
-const INITIAL_LINKS: &[&str] = &[
-    "https://fr.indeed.com/q-embedded-systems-intern-emplois.html",
-    "https://www.google.com/search?q=internship+rust+linux+embedded",
-];
+const INITIAL_LINKS: &[&str] = &[];
 
 impl Analyser {
     pub fn new() -> Self {
@@ -39,7 +39,13 @@ impl Analyser {
     pub async fn analyse_html(&self, HtmlUrl { html, url }: HtmlUrl) {
         let score = html_to_score(&html);
         if let Err(err) = self.html_to_links(&html, score, &url).await {
-            eprintln!("Failed to analyse {url}: {err}")
+            eprintln!("Failed to analyse {url}: {err}");
+            let mut file = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open("errors.txt")
+                .unwrap();
+            writeln!(file, "Failed to analyse {url}: {err}").unwrap();
         }
         self.discovered_links.lock().await.insert(url, score);
     }
@@ -101,7 +107,7 @@ impl Analyser {
         score: usize,
         parent_link: &str,
     ) -> Result<(), String> {
-        let ast = Html::parse(html)?;
+        let ast = catch_unwind(|| Html::parse(html)).map_err(|err| format!("{err:?}"))??;
         let filtered_tree = ast.filter(&self.filter);
         self.tree_to_links(filtered_tree, score, parent_link).await;
         Ok(())
