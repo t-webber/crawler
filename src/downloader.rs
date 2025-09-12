@@ -30,7 +30,7 @@ impl Downloader {
                     }
                 }
                 Err(_) => {
-                    println!("Downloader delayed");
+                    println!("\rDownloader delayed\r");
                     sleep(delay).await;
                     delay *= 2;
                 }

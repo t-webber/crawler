@@ -1,7 +1,10 @@
 use core::time::Duration;
 use std::collections::BinaryHeap;
+use std::process::exit;
 use std::sync::Arc;
 
+use crossterm::event;
+use crossterm::terminal;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -32,15 +35,37 @@ impl Crawler {
     }
 
     pub async fn run(&self) {
-        let downloader = self.run_downloader();
-        let downloader2 = self.run_downloader();
-        let analyser = self.run_analyser();
-        downloader.await.await.unwrap();
-        downloader2.await.await.unwrap();
-        analyser.await.unwrap();
+        let handles = vec![
+            self.run_downloader(),
+            self.run_downloader(),
+            self.run_downloader(),
+            self.run_analyser(),
+            self.listener(),
+        ];
+        for handle in handles {
+            handle.await.unwrap();
+        }
     }
 
-    async fn run_downloader(&self) -> JoinHandle<()> {
+    fn listener(&self) -> JoinHandle<()> {
+        let analyser = Arc::clone(&self.analyser);
+        terminal::enable_raw_mode().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let event = event::read().unwrap();
+                if let Some(key) = event.as_key_event()
+                    && key.is_press()
+                    && key.code.is_char('q')
+                {
+                    terminal::disable_raw_mode().unwrap();
+                    analyser.create_report().await;
+                    exit(0);
+                }
+            }
+        })
+    }
+
+    fn run_downloader(&self) -> JoinHandle<()> {
         let analyser = Arc::clone(&self.analyser);
         let downloader = Arc::clone(&self.downloader);
         let htmls = Arc::clone(&self.htmls);
@@ -48,14 +73,14 @@ impl Crawler {
             loop {
                 let Some(next_url_to_download) = analyser.next_link().await else {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    println!("Downloader has nothing to do");
+                    println!("\rDownloader has nothing to do\r");
                     continue;
                 };
 
                 let ScoredValue { value: url, score } = next_url_to_download;
 
                 if let Some(html) = downloader.download_html(&url).await {
-                    println!("Downloaded {url}");
+                    println!("\rDownloaded {url}\r");
                     let scored_html = ScoredValue {
                         score,
                         value: HtmlUrl { html, url },
@@ -63,7 +88,7 @@ impl Crawler {
 
                     htmls.lock().await.push(scored_html);
                 } else {
-                    eprintln!("Failed to download {url}")
+                    eprintln!("\rFailed to download {url}\r")
                 }
             }
         })
@@ -76,11 +101,11 @@ impl Crawler {
             loop {
                 let Some(next_html_to_analyse) = htmls.lock().await.pop() else {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    println!("Analyser has nothing to do");
+                    println!("\rAnalyser has nothing to do\r");
                     continue;
                 };
 
-                println!("Analysing {}", next_html_to_analyse.value.url);
+                println!("\rAnalysing {}\r", next_html_to_analyse.value.url);
                 analyser.analyse_html(next_html_to_analyse.value).await;
             }
         })
