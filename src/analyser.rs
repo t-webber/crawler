@@ -6,6 +6,7 @@ use std::panic::catch_unwind;
 
 use html_filter::prelude::{Filter, Html};
 use tokio::sync::Mutex;
+use url::Url;
 
 use crate::crawler::HtmlUrl;
 use crate::value::ScoredValue;
@@ -13,9 +14,9 @@ use crate::value::ScoredValue;
 #[derive(Debug)]
 pub struct Analyser {
     filter: Filter,
-    links: Mutex<HashSet<String>>,
-    priority_links: Mutex<BinaryHeap<ScoredValue<String>>>,
-    discovered_links: Mutex<HashMap<String, usize>>,
+    links: Mutex<HashSet<Url>>,
+    priority_links: Mutex<BinaryHeap<ScoredValue<Url>>>,
+    discovered_links: Mutex<HashMap<Url, usize>>,
 }
 
 const INITIAL_LINKS_FILE: &str = "initial_links.txt";
@@ -36,7 +37,7 @@ impl Analyser {
         let initial_links = fs::read_to_string(INITIAL_LINKS_FILE).unwrap();
         for link in initial_links.lines() {
             priority_links.push(ScoredValue {
-                value: link.to_owned(),
+                value: Url::parse(link).unwrap(),
                 score: 100,
             });
         }
@@ -62,20 +63,10 @@ impl Analyser {
         self.discovered_links.lock().await.insert(url, score);
     }
 
-    async fn push_link(&self, link: &str, score: usize, parent_link: &str) {
-        let resolved_link =
-            if link.starts_with("http") || link.starts_with("www") || link.contains('.') {
-                link.to_owned()
-            } else {
-                let mut split = parent_link.split('/').collect::<Vec<_>>();
-                let len = split.len();
-                if len >= 2 {
-                    split[len - 1] = link;
-                } else {
-                    split.push(link);
-                }
-                split.join("/").replace("//", "/").replace("//", "/")
-            };
+    async fn push_link(&self, link: &str, score: usize, parent_link: &Url) -> Result<(), String> {
+        let resolved_link = parent_link
+            .join(link)
+            .map_err(|err| format!("Invalid url: {err}"))?;
 
         let mut links = self.links.lock().await;
         if !links.contains(&resolved_link) {
@@ -85,13 +76,14 @@ impl Analyser {
                 value: resolved_link,
             });
         }
+        Ok(())
     }
 
-    pub async fn next_link(&self) -> Option<ScoredValue<String>> {
+    pub async fn next_link(&self) -> Option<ScoredValue<Url>> {
         self.priority_links.lock().await.pop()
     }
 
-    async fn tree_to_links(&self, html: Html, score: usize, parent_link: &str) {
+    async fn tree_to_links(&self, html: Html, score: usize, parent_link: &Url) {
         let mut nodes: Vec<Html> = vec![html];
         let mut count = 0;
         while let Some(node) = nodes.pop() {
@@ -99,7 +91,9 @@ impl Analyser {
                 Html::Tag { tag, child, .. } => {
                     if let Some(href) = tag.find_attr_value("href") {
                         count += 1;
-                        self.push_link(href, score, parent_link).await;
+                        if let Err(err) = self.push_link(href, score, parent_link).await {
+                            eprintln!("{err}");
+                        }
                     }
                     nodes.push(*child);
                 }
@@ -118,7 +112,7 @@ impl Analyser {
         &self,
         html: &str,
         score: usize,
-        parent_link: &str,
+        parent_link: &Url,
     ) -> Result<(), String> {
         let ast = catch_unwind(|| Html::parse(html)).map_err(|err| format!("PANIC: {err:?}"))??;
         let filtered_tree = ast.filter(&self.filter);

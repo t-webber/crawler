@@ -7,6 +7,7 @@ use crossterm::event;
 use crossterm::terminal;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use url::Url;
 
 use crate::analyser::Analyser;
 use crate::downloader::Downloader;
@@ -15,7 +16,7 @@ use crate::value::ScoredValue;
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct HtmlUrl {
     pub html: String,
-    pub url: String,
+    pub url: Url,
 }
 
 #[derive(Debug)]

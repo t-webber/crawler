@@ -2,6 +2,7 @@ use reqwest::Client;
 use reqwest::redirect::Policy;
 use std::time::Duration;
 use tokio::time::sleep;
+use url::Url;
 
 #[derive(Debug)]
 pub struct Downloader {
@@ -19,11 +20,11 @@ impl Downloader {
         Self { client }
     }
 
-    pub async fn download_html(&self, url: &str) -> Option<String> {
+    pub async fn download_html(&self, url: &Url) -> Option<String> {
         let mut delay = Duration::from_secs(1);
 
         for _ in 0..5 {
-            match self.client.get(url).send().await {
+            match self.client.get(url.to_string()).send().await {
                 Ok(resp) => {
                     if let Ok(text) = resp.text().await {
                         return Some(text);
