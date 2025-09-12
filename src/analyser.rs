@@ -18,13 +18,7 @@ pub struct Analyser {
     discovered_links: Mutex<HashMap<String, usize>>,
 }
 
-const INITIAL_LINKS: &[&str] = &[
-    "https://fr.indeed.com/q-embedded-systems-intern-emplois.html",
-    "https://www.reddit.com/r/internships/comments/sg9t88/where_is_the_best_place_to_find_internships/",
-    "https://www.extern.com/post/best-websites-to-find-internships",
-    "https://www.goabroad.com/intern-abroad",
-    "https://www.quora.com/What-is-the-best-paid-internship-site",
-];
+const INITIAL_LINKS_FILE: &str = "initial_links.txt";
 
 impl Analyser {
     pub async fn create_report(&self) {
@@ -39,7 +33,8 @@ impl Analyser {
 
     pub fn new() -> Self {
         let mut priority_links = BinaryHeap::new();
-        for &link in INITIAL_LINKS {
+        let initial_links = fs::read_to_string(INITIAL_LINKS_FILE).unwrap();
+        for link in initial_links.lines() {
             priority_links.push(ScoredValue {
                 value: link.to_owned(),
                 score: 100,
